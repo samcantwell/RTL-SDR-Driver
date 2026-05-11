@@ -2,6 +2,7 @@ use nusb::MaybeFuture;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient, TransferError};
 use std::time::Duration;
 
+#[derive(Debug, Copy, Clone)]
 pub enum Block {
     Usb = 1,
     Sys = 2,
@@ -23,17 +24,21 @@ pub fn read_reg(
 ) -> Result<Vec<u8>, TransferError> {
     interface
         .control_in(
-            ControlIn {
-                control_type: ControlType::Vendor,
-                recipient: Recipient::Device,
-                request: 0,
-                value: addr,
-                index: (block as u16) << 8,
-                length,
-            },
+            encode_read_reg(block, addr, length),
             Duration::from_millis(300),
         )
         .wait()
+}
+
+fn encode_read_reg(block: Block, addr: u16, length: u16) -> ControlIn {
+    ControlIn {
+        control_type: ControlType::Vendor,
+        recipient: Recipient::Device,
+        request: 0,
+        value: addr,
+        index: (block as u16) << 8,
+        length,
+    }
 }
 
 /// Writes `data` to a register in the given block.
@@ -48,17 +53,21 @@ pub fn write_reg(
 ) -> Result<(), TransferError> {
     interface
         .control_out(
-            ControlOut {
-                control_type: ControlType::Vendor,
-                recipient: Recipient::Device,
-                request: 0,
-                value: addr,
-                index: (block as u16) << 8 | 0x10,
-                data,
-            },
+            encode_write_reg(block, addr, data),
             Duration::from_millis(300),
         )
         .wait()
+}
+
+fn encode_write_reg(block: Block, addr: u16, data: &[u8]) -> ControlOut<'_> {
+    ControlOut {
+        control_type: ControlType::Vendor,
+        recipient: Recipient::Device,
+        request: 0,
+        value: addr,
+        index: (block as u16) << 8 | 0x10,
+        data,
+    }
 }
 
 /// Reads `length` bytes from a demodulator register.
@@ -85,17 +94,21 @@ pub fn read_demod_reg(
 ) -> Result<Vec<u8>, TransferError> {
     interface
         .control_in(
-            ControlIn {
-                control_type: ControlType::Vendor,
-                recipient: Recipient::Device,
-                request: 0,
-                value: u16::from(addr) << 8 | 0x20,
-                index: u16::from(page),
-                length,
-            },
+            encode_read_demod(page, addr, length),
             Duration::from_millis(300),
         )
         .wait()
+}
+
+fn encode_read_demod(page: u8, addr: u8, length: u16) -> ControlIn {
+    ControlIn {
+        control_type: ControlType::Vendor,
+        recipient: Recipient::Device,
+        request: 0,
+        value: u16::from(addr) << 8 | 0x20,
+        index: u16::from(page),
+        length,
+    }
 }
 
 /// Writes `data` to a demodulator register.
@@ -116,17 +129,21 @@ pub fn write_demod_reg(
     // as a flush. Add this if fast sequential writes cause issues.
     interface
         .control_out(
-            ControlOut {
-                control_type: ControlType::Vendor,
-                recipient: Recipient::Device,
-                request: 0,
-                value: u16::from(addr) << 8 | 0x20,
-                index: u16::from(page) | 0x10,
-                data,
-            },
+            encode_write_demod(page, addr, data),
             Duration::from_millis(300),
         )
         .wait()
+}
+
+fn encode_write_demod(page: u8, addr: u8, data: &[u8]) -> ControlOut<'_> {
+    ControlOut {
+        control_type: ControlType::Vendor,
+        recipient: Recipient::Device,
+        request: 0,
+        value: u16::from(addr) << 8 | 0x20,
+        index: u16::from(page) | 0x10,
+        data,
+    }
 }
 
 // TODO: Might be safer to use block 3 (tuner) instead of block 6 (i2c)
@@ -158,17 +175,21 @@ pub fn read_i2c(
 ) -> Result<Vec<u8>, TransferError> {
     interface
         .control_in(
-            ControlIn {
-                control_type: ControlType::Vendor,
-                recipient: Recipient::Device,
-                request: 0,
-                value: u16::from(reg_addr) << 8 | u16::from(dev_addr),
-                index: (Block::I2c as u16) << 8,
-                length,
-            },
+            encode_read_i2c(dev_addr, reg_addr, length),
             Duration::from_millis(300),
         )
         .wait()
+}
+
+fn encode_read_i2c(dev_addr: u8, reg_addr: u8, length: u16) -> ControlIn {
+    ControlIn {
+        control_type: ControlType::Vendor,
+        recipient: Recipient::Device,
+        request: 0,
+        value: u16::from(reg_addr) << 8 | u16::from(dev_addr),
+        index: (Block::I2c as u16) << 8,
+        length,
+    }
 }
 
 /// Writes `data` to an I2C device via the RTL2832U's I2C bridge.
@@ -188,15 +209,91 @@ pub fn write_i2c(
 ) -> Result<(), TransferError> {
     interface
         .control_out(
-            ControlOut {
-                control_type: ControlType::Vendor,
-                recipient: Recipient::Device,
-                request: 0,
-                value: u16::from(reg_addr) << 8 | u16::from(dev_addr),
-                index: (Block::I2c as u16) << 8 | 0x10,
-                data,
-            },
+            encode_write_i2c(dev_addr, reg_addr, data),
             Duration::from_millis(300),
         )
         .wait()
+}
+
+fn encode_write_i2c(dev_addr: u8, reg_addr: u8, data: &[u8]) -> ControlOut<'_> {
+    ControlOut {
+        control_type: ControlType::Vendor,
+        recipient: Recipient::Device,
+        request: 0,
+        value: u16::from(reg_addr) << 8 | u16::from(dev_addr),
+        index: (Block::I2c as u16) << 8 | 0x10,
+        data,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_reg_block_encoding() {
+        let cases = [
+            (Block::Usb, 0x0100),
+            (Block::Sys, 0x0200),
+            (Block::I2c, 0x0600),
+        ];
+        for (block, expected_index) in cases {
+            let ctrl = encode_read_reg(block, 0x0000, 1);
+            assert_eq!(ctrl.index, expected_index, "block {block:?}");
+        }
+    }
+
+    #[test]
+    fn write_reg_block_encoding() {
+        let cases = [
+            (Block::Usb, 0x0110),
+            (Block::Sys, 0x0210),
+            (Block::I2c, 0x0610),
+        ];
+        for (block, expected_index) in cases {
+            let ctrl = encode_write_reg(block, 0x0000, &[0x00]);
+            assert_eq!(ctrl.index, expected_index, "block {block:?}");
+        }
+    }
+
+    #[test]
+    fn read_demod_encoding() {
+        let cases = [
+            (0, 0x00, 0x0020, 0),
+            (2, 0x03, 0x0320, 2),
+            (4, 0xff, 0xff20, 4),
+        ];
+        for (page, addr, expected_value, expected_index) in cases {
+            let ctrl = encode_read_demod(page, addr, 1);
+            assert_eq!(ctrl.index, expected_index, "page {page:?}");
+            assert_eq!(ctrl.value, expected_value, "register {addr:?}");
+        }
+    }
+
+    #[test]
+    fn write_demod_encoding() {
+        let ctrl = encode_write_demod(2, 0x03, &[0x00]);
+        assert_eq!(ctrl.index, 0x12);
+        assert_eq!(ctrl.value, 0x0320);
+        let cases = [
+            (0, 0x00, 0x0020, 0x10),
+            (2, 0x03, 0x0320, 0x12),
+            (4, 0xff, 0xff20, 0x14),
+        ];
+        for (page, addr, expected_value, expected_index) in cases {
+            let ctrl = encode_write_demod(page, addr, &[0x00]);
+            assert_eq!(ctrl.index, expected_index, "page {page:?}");
+            assert_eq!(ctrl.value, expected_value, "register {addr:?}");
+        }
+    }
+
+    #[test]
+    fn read_i2c_encoding() {
+        assert_eq!(encode_read_i2c(0x34, 0x56, 1).value, 0x5634);
+    }
+
+    #[test]
+    fn write_i2c_encoding() {
+        assert_eq!(encode_write_i2c(0x34, 0x56, &[0x00]).value, 0x5634);
+    }
 }
