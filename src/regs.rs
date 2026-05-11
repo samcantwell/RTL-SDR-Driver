@@ -14,6 +14,7 @@ pub enum Block {
 /// `wValue` and the block selects the target subsystem via `wIndex`.
 ///
 /// Registers are byte-addressable and little-endian.
+#[expect(dead_code)]
 pub fn read_reg(
     interface: &nusb::Interface,
     block: Block,
@@ -75,6 +76,7 @@ pub fn write_reg(
 ///
 /// Demod registers will stall until `DEMOD_CTL` (0x3000) has bit 7 (PLL on) and
 /// bit 5 (reset released) set. Minimum: write `0xa0` to `0x3000`.
+#[expect(dead_code)]
 pub fn read_demod_reg(
     interface: &nusb::Interface,
     page: u8,
@@ -177,6 +179,7 @@ pub fn read_i2c(
 /// # Prerequisites
 ///
 /// The I2C repeater must be enabled first (demod page 1, reg 0x01, bit 3).
+#[expect(dead_code)]
 pub fn write_i2c(
     interface: &nusb::Interface,
     dev_addr: u8,
