@@ -101,18 +101,36 @@ impl Device {
     }
 
     fn detect_tuner(&self) -> Result<u8, Error> {
-        // bit 3 opens i2c repeater, bit 4 is undocumented and might not be needed
-        write_demod_reg(&self.interface, 1, 0x01, &[0x18])?;
-
-        let value = read_i2c(&self.interface, TUNER_ADDR, 0x00, 1)?;
-
-        // Close i2c repeater
-        write_demod_reg(&self.interface, 1, 0x01, &[0x10])?;
-
+        let i2c = I2cRepeater::open(&self.interface)?;
+        let value = i2c.read(TUNER_ADDR, 0x00, 1)?;
         if value[0] != TUNER_CHIP_ID {
             return Err(Error::TunerNotFound);
         }
         Ok(value[0])
+    }
+}
+
+struct I2cRepeater<'a> {
+    interface: &'a nusb::Interface,
+}
+
+impl<'a> I2cRepeater<'a> {
+    fn open(interface: &'a nusb::Interface) -> Result<Self, TransferError> {
+        // bit 3 opens i2c repeater, bit 4 is undocumented and might not be needed
+        write_demod_reg(interface, 1, 0x01, &[0x18])?;
+        Ok(Self { interface })
+    }
+
+    fn read(&self, dev_addr: u8, reg_addr: u8, length: u16) -> Result<Vec<u8>, TransferError> {
+        read_i2c(self.interface, dev_addr, reg_addr, length)
+    }
+}
+
+impl Drop for I2cRepeater<'_> {
+    fn drop(&mut self) {
+        if let Err(e) = write_demod_reg(self.interface, 1, 0x01, &[0x10]) {
+            eprintln!("Failed to close I2cRepeater: {e}. Continuing anyway...");
+        }
     }
 }
 
