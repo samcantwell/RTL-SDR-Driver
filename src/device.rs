@@ -1,8 +1,8 @@
 use crate::error::Error;
-use crate::regs::{read_i2c, write_demod_reg, write_reg, Block};
+use crate::regs::{Block, read_i2c, write_demod_reg, write_reg};
 
-use nusb::transfer::TransferError;
 use nusb::MaybeFuture;
+use nusb::transfer::TransferError;
 
 const RTL_VID: u16 = 0x0bda;
 const RTL_PID: u16 = 0x2838;
