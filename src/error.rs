@@ -23,9 +23,9 @@ impl From<transfer::TransferError> for Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::DeviceNotFound => write!(f, "Could not find RTL-SDR USB device"),
-            Error::Transfer(e) => write!(f, "Transfer error: {e}"),
-            Error::TunerNotFound => write!(f, "Correct tuner not found"),
+            Error::DeviceNotFound => write!(f, "could not find RTL-SDR USB device"),
+            Error::Transfer(e) => write!(f, "transfer error: {e}"),
+            Error::TunerNotFound => write!(f, "correct tuner not found"),
             Error::Usb(e) => write!(f, "USB error: {e}"),
         }
     }
