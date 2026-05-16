@@ -103,7 +103,6 @@ impl Device {
         // Disable stall
         self.write_reg(Block::Usb, 0x2148, &[0x00, 0x00])?;
 
-        //Ok(UntunedDevice{ interface: self.interface })
         Ok(())
     }
 
