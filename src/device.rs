@@ -107,13 +107,13 @@ impl Device {
         Ok(())
     }
 
-    fn detect_tuner(&self) -> Result<u8, Error> {
+    fn detect_tuner(&self) -> Result<(), Error> {
         let i2c = I2cRepeater::open(self)?;
         let value = i2c.read(TUNER_ADDR, 0x00, 1)?;
         if value[0] != TUNER_CHIP_ID {
             return Err(Error::TunerNotFound);
         }
-        Ok(value[0])
+        Ok(())
     }
 
     /// Reads `length` bytes from a register in the given block.
