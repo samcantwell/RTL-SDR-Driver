@@ -2,7 +2,6 @@ use crate::error::Error;
 
 mod device;
 mod error;
-mod regs;
 
 fn main() {
     if let Err(e) = run() {
