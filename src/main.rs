@@ -1,16 +1,16 @@
-use crate::error::Error;
+use rtlsdrs::{Config, Device};
+use std::fs;
+use std::time::Duration;
 
-mod device;
-mod error;
+fn main() -> Result<(), rtlsdrs::Error> {
+    let device = Device::open()?;
+    device.configure(Config {
+        frequency: 100_000_000,
+        sample_rate: 2_048_000,
+    })?;
+    device.init()?;
+    let samples = device.sample(Duration::from_secs(10))?;
 
-fn main() {
-    if let Err(e) = run() {
-        eprintln!("Error: {e}");
-        std::process::exit(1);
-    }
-}
-
-fn run() -> Result<(), Error> {
-    let _device = device::Device::open()?;
+    fs::write("output.bin", samples)?;
     Ok(())
 }

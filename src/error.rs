@@ -6,6 +6,7 @@ pub enum Error {
     Usb(nusb::Error),
     Transfer(nusb::transfer::TransferError),
     TunerNotFound,
+    FileError(std::io::Error),
 }
 
 impl From<nusb::Error> for Error {
@@ -20,6 +21,12 @@ impl From<transfer::TransferError> for Error {
     }
 }
 
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self::FileError(e)
+    }
+}
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -27,6 +34,7 @@ impl std::fmt::Display for Error {
             Error::Transfer(e) => write!(f, "transfer error: {e}"),
             Error::TunerNotFound => write!(f, "correct tuner not found"),
             Error::Usb(e) => write!(f, "USB error: {e}"),
+            Error::FileError(e) => write!(f, "File I/O error: {e}"),
         }
     }
 }
