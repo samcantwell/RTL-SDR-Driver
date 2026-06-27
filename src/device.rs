@@ -103,6 +103,38 @@ impl Device {
         // Set FIR coefficients
         self.write_demod_reg(1, 0x1c, &Self::convert_fir(FIR_COEFFICIENTS))?;
 
+        /*
+        // Below demod writes copied from driver code
+        /* enable SDR mode, disable DAGC (bit 5) */
+        self.write_demod_reg(0, 0x19, &[0x05])?;
+
+        /* init FSM state-holding register */
+        self.write_demod_reg(1, 0x93, &[0xf0])?;
+        self.write_demod_reg(1, 0x94, &[0x0f])?;
+
+        /* disable AGC (en_dagc, bit 0) (this seems to have no effect) */
+        self.write_demod_reg(1, 0x11, &[0x00])?;
+
+        /* disable RF and IF AGC loop */
+        self.write_demod_reg(1, 0x04, &[0x00])?;
+
+        /* disable PID filter (enable_PID = 0) */
+        self.write_demod_reg(0, 0x61, &[0x60])?;
+
+        /* opt_adc_iq = 0, default ADC_I/ADC_Q datapath */
+        self.write_demod_reg(0, 0x06, &[0x80])?;
+
+        /* Enable Zero-IF mode (en_bbin bit), DC cancellation (en_dc_est),
+         * IQ estimation/compensation (en_iq_comp, en_iq_est) */
+        self.write_demod_reg(1, 0xb1, &[0x1b])?;
+
+        /* disable 4.096 MHz clock output on pin TP_CK0 */
+        self.write_demod_reg(0, 0x0d, &[0x83])?;
+        */
+
+        // Unstall
+        self.write_reg(Block::Usb, 0x2148, &[0x00, 0x00])?;
+
         Ok(())
     }
 
