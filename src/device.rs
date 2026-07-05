@@ -1,6 +1,7 @@
 use crate::error::Error;
 use nusb::MaybeFuture;
 use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient, TransferError};
+use std::io::Read;
 use std::time::Duration;
 
 // Vendor ID and product ID of the RTL2832U
@@ -11,10 +12,15 @@ const FIR_COEFFICIENTS: [i16; 16] = [
     -54, -36, -41, -40, -32, -14, 14, 53, 101, 156, 215, 273, 327, 372, 404, 421,
 ];
 
+const TUNER_INIT_ARRAY: [u8; 27] = [
+    0x80, 0x13, 0x70, 0xc0, 0x40, 0xdb, 0x6b, 0xeb, 0x53, 0x75, 0x68, 0x6c, 0xbb, 0x80, 0x31, 0x0f,
+    0x00, 0xc0, 0x30, 0x48, 0xec, 0x60, 0x00, 0x24, 0xdd, 0x0e, 0x40,
+];
+
 enum Block {
     Usb = 1,
-    //Sys = 2,
-    //I2c = 6,
+    Sys = 2,
+    I2c = 6,
 }
 
 pub struct Device {
@@ -38,6 +44,7 @@ impl Device {
         let device = Self::find_device()?;
         device.init()?;
         //device.detect_tuner()?;
+        //device.init_tuner()?;
 
         Ok(device)
     }
@@ -57,7 +64,23 @@ impl Device {
     ///
     /// Will return `Err` if there are any USB errors during the process.
     pub fn sample(&self, _duration: Duration) -> Result<Vec<u8>, Error> {
-        Ok(vec![1, 2, 3, 4])
+        let mut reader = self
+            .interface
+            .endpoint::<nusb::transfer::Bulk, nusb::transfer::In>(0x81)?
+            .reader(4096);
+
+        let mut iq = Vec::new();
+
+        let samples = 2_048_000 * 10 * 2;
+        for _ in 0..(samples / 512) {
+            let mut buf = [0; 512];
+            reader.read_exact(&mut buf)?;
+
+            iq.extend_from_slice(&buf);
+        }
+
+        dbg!(iq.len());
+        Ok(iq)
     }
 
     fn find_device() -> Result<Self, Error> {
@@ -77,6 +100,51 @@ impl Device {
     /// # Errors
     ///
     /// Will return `Err` if there are any USB errors during the process.
+    fn init(&self) -> Result<(), Error> {
+        // Init the USB endpoint
+        self.write_reg(Block::Usb, 0x2000, &[0x09])?;
+        // Power on the demod and ADC
+        self.write_reg(Block::Sys, 0x3000, &[0xe8])?;
+
+        // Set minimal FIR coefficients
+        self.write_demod_reg(1, 0x2e, &[0x41])?;
+        // Enable rawIQ mode and disable DAGC
+        // TODO: why disable DAGC?
+        self.write_demod_reg(0, 0x19, &[0x05])?;
+        self.write_demod_reg(1, 0x94, &[0x0f])?;
+        self.write_demod_reg(0, 0x06, &[0x80])?;
+        self.write_demod_reg(1, 0x01, &[0x18])?;
+        self.write_demod_reg(1, 0x03, &[0x80])?;
+        self.write_demod_reg(1, 0x04, &[0xcc])?;
+        self.write_demod_reg(0, 0x08, &[0x4d])?;
+
+        self.write_reg(
+            Block::I2c,
+            0x0034,
+            &[0x05, 0x80, 0x13, 0x70, 0xc0, 0x40, 0xdb, 0x6b],
+        )?;
+        self.write_reg(
+            Block::I2c,
+            0x0034,
+            &[0x13, 0x31, 0x0f, 0x00, 0xc0, 0x30, 0x48, 0xec],
+        )?;
+
+        self.write_demod_reg(1, 0x15, &[0x01])?;
+        self.write_demod_reg(1, 0x9f, &[0x03, 0x84])?;
+        self.write_demod_reg(1, 0x01, &[0x14])?;
+        self.write_demod_reg(1, 0x01, &[0x18])?;
+
+        self.write_reg(Block::I2c, 0x34, &[0x1e, 0x4e])?;
+        self.write_demod_reg(1, 0x19, &[0x3c])?;
+        self.write_demod_reg(1, 0x1a, &[0x99])?;
+        self.write_reg(Block::I2c, 0x34, &[0x10, 0x84])?;
+        self.write_reg(Block::I2c, 0x34, &[0x14, 0x0b])?;
+        self.write_reg(Block::I2c, 0x34, &[0x16, 0x76])?;
+        self.write_reg(Block::I2c, 0x34, &[0x0c, 0xf0])?;
+
+        Ok(())
+    }
+    /*
     fn init(&self) -> Result<(), Error> {
         // Initialise USB endpoint
         self.write_reg(Block::Usb, 0x2000, &[0x09])?;
@@ -137,6 +205,7 @@ impl Device {
 
         Ok(())
     }
+    */
 
     #[allow(clippy::cast_possible_truncation)]
     #[allow(clippy::cast_sign_loss)]
@@ -153,6 +222,33 @@ impl Device {
             }))
             .map(|a| a as u8)
             .collect()
+    }
+
+    fn detect_tuner(&self) -> Result<(), Error> {
+        self.i2c_open()?;
+
+        let tuner = self.i2c_read_reg(0x34, 0x00, 1)?[0];
+        if tuner != 0x69 {
+            return Err(Error::TunerNotFound);
+        }
+
+        self.i2c_close()?;
+        Ok(())
+    }
+
+    fn init_tuner(&self) -> Result<(), Error> {
+        self.i2c_open()?;
+
+        self.i2c_write_reg(0x34, 0x00, &[0x05, 0b1001_0110, 0b0110_1001])?;
+        let regs = self.i2c_read_reg(0x34, 0x00, 16)?;
+        for reg in regs {
+            println!("0x{reg:02x} 0b{reg:08b}");
+        }
+        //self.i2c_write_reg(0x34, 0x05, &TUNER_INIT_ARRAY)?;
+        //dbg!(self.i2c_read_reg(0x34, 0x00, 32)?);
+
+        self.i2c_close()?;
+        Ok(())
     }
 }
 
@@ -183,7 +279,7 @@ impl Device {
     /// - 0x0001 <- 0xab
     ///
     fn write_reg(&self, block: Block, addr: u16, data: &[u8]) -> Result<(), TransferError> {
-        let reversed: Vec<u8> = data.iter().rev().copied().collect();
+        //let reversed: Vec<u8> = data.iter().rev().copied().collect();
 
         self.interface
             .control_out(
@@ -193,7 +289,8 @@ impl Device {
                     request: 0,
                     value: addr,
                     index: (block as u16) << 8 | 0x10,
-                    data: &reversed,
+                    //data: &reversed,
+                    data,
                 },
                 Duration::from_millis(300),
             )
@@ -226,6 +323,53 @@ impl Device {
                     request: 0,
                     value: u16::from(addr) << 8 | 0x20,
                     index: u16::from(page) | 0x10,
+                    data,
+                },
+                Duration::from_millis(300),
+            )
+            .wait()
+    }
+
+    fn i2c_open(&self) -> Result<(), Error> {
+        self.write_demod_reg(1, 0x01, &[0x18])?;
+        Ok(())
+    }
+
+    fn i2c_close(&self) -> Result<(), Error> {
+        self.write_demod_reg(1, 0x01, &[0x10])?;
+        Ok(())
+    }
+
+    fn i2c_read_reg(
+        &self,
+        dev_addr: u8,
+        reg_addr: u8,
+        length: u16,
+    ) -> Result<Vec<u8>, TransferError> {
+        self.interface
+            .control_in(
+                ControlIn {
+                    control_type: ControlType::Vendor,
+                    recipient: Recipient::Device,
+                    request: 0,
+                    value: u16::from(reg_addr) << 8 | u16::from(dev_addr),
+                    index: (Block::I2c as u16) << 8,
+                    length,
+                },
+                Duration::from_millis(300),
+            )
+            .wait()
+    }
+
+    fn i2c_write_reg(&self, dev_addr: u8, reg_addr: u8, data: &[u8]) -> Result<(), TransferError> {
+        self.interface
+            .control_out(
+                ControlOut {
+                    control_type: ControlType::Vendor,
+                    recipient: Recipient::Device,
+                    request: 0,
+                    value: u16::from(reg_addr) << 8 | u16::from(dev_addr),
+                    index: (Block::I2c as u16) << 8 | 0x10,
                     data,
                 },
                 Duration::from_millis(300),
