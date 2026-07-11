@@ -1,6 +1,6 @@
 use crate::error::Error;
+use crate::transport::{Block, Transport};
 use nusb::MaybeFuture;
-use nusb::transfer::{ControlIn, ControlOut, ControlType, Recipient, TransferError};
 use std::io::Read;
 use std::time::Duration;
 
@@ -21,20 +21,12 @@ const TUNER_INIT_ARRAY: [u8; 27] = [
 
 const R820T_DEV_ADDR: u16 = 0x0034;
 
-const TIMEOUT_DURATION: Duration = Duration::from_millis(300);
-
-enum Block {
-    Usb = 1,
-    Sys = 2,
-    I2c = 6,
-}
-
 pub struct Device {
-    interface: nusb::Interface,
+    transport: Transport,
 }
 
 pub struct ConfiguredDevice {
-    device: Device,
+    transport: Transport,
     // Consider adding config: Config here
 }
 
@@ -66,7 +58,9 @@ impl Device {
     ///
     /// Will return `Err` if there are any USB errors during the process.
     pub fn configure(self, _config: Config) -> Result<ConfiguredDevice, Error> {
-        Ok(ConfiguredDevice { device: self })
+        Ok(ConfiguredDevice {
+            transport: self.transport,
+        })
     }
 
     fn find_device() -> Result<Self, Error> {
@@ -78,7 +72,9 @@ impl Device {
         let device = device_info.open().wait()?;
         let interface = device.claim_interface(0).wait()?;
 
-        Ok(Self { interface })
+        Ok(Self {
+            transport: Transport::new(interface),
+        })
     }
 
     /// Initialises the RTL2832U and R820T chips.
@@ -88,67 +84,73 @@ impl Device {
     /// Will return `Err` if there are any USB errors during the process.
     fn init(&self) -> Result<(), Error> {
         // Init the USB endpoint
-        self.write_reg(Block::Usb, 0x2000, &[0x09])?;
+        self.transport.write_reg(Block::Usb, 0x2000, &[0x09])?;
         // Power on the demod and ADC
-        self.write_reg(Block::Sys, 0x3000, &[0xe8])?;
+        self.transport.write_reg(Block::Sys, 0x3000, &[0xe8])?;
 
         // Set minimal FIR coefficients
-        self.write_demod_reg(1, 0x2e, &[0x41])?;
+        self.transport.write_demod_reg(1, 0x2e, &[0x41])?;
         // Enable rawIQ mode and disable DAGC
         // TODO: why disable DAGC?
-        self.write_demod_reg(0, 0x19, &[0x05])?;
+        self.transport.write_demod_reg(0, 0x19, &[0x05])?;
         // Init FSM register
-        self.write_demod_reg(1, 0x94, &[0x0f])?;
+        self.transport.write_demod_reg(1, 0x94, &[0x0f])?;
         // ADC_I/ADC_Q datapath
-        self.write_demod_reg(0, 0x06, &[0x80])?;
+        self.transport.write_demod_reg(0, 0x06, &[0x80])?;
         // Open I2C repeater
-        self.write_demod_reg(1, 0x01, &[0x18])?;
+        self.transport.write_demod_reg(1, 0x01, &[0x18])?;
         // Set AGC target level
-        self.write_demod_reg(1, 0x03, &[0x80])?;
+        self.transport.write_demod_reg(1, 0x03, &[0x80])?;
         // Set AGC loop gain
-        self.write_demod_reg(1, 0x04, &[0xcc])?;
+        self.transport.write_demod_reg(1, 0x04, &[0xcc])?;
         // Only enable in-phase ADC input
-        self.write_demod_reg(0, 0x08, &[0x4d])?;
+        self.transport.write_demod_reg(0, 0x08, &[0x4d])?;
 
         // Tuner initial writes
-        self.write_reg(
+        self.transport.write_reg(
             Block::I2c,
             R820T_DEV_ADDR,
             &[0x05, 0x80, 0x13, 0x70, 0xc0, 0x40, 0xdb, 0x6b],
         )?;
-        self.write_reg(
+        self.transport.write_reg(
             Block::I2c,
             R820T_DEV_ADDR,
             &[0x13, 0x31, 0x0f, 0x00, 0xc0, 0x30, 0x48, 0xec],
         )?;
 
         // Fix spectral inversion
-        self.write_demod_reg(1, 0x15, &[0x01])?;
+        self.transport.write_demod_reg(1, 0x15, &[0x01])?;
         // Resampler ratio
-        self.write_demod_reg(1, 0x9f, &[0x03, 0x84])?;
+        self.transport.write_demod_reg(1, 0x9f, &[0x03, 0x84])?;
         // Demod soft reset
-        self.write_demod_reg(1, 0x01, &[0x14])?;
+        self.transport.write_demod_reg(1, 0x01, &[0x14])?;
         // Release soft reset and turn i2c back on
-        self.write_demod_reg(1, 0x01, &[0x18])?;
+        self.transport.write_demod_reg(1, 0x01, &[0x18])?;
 
         // Enable channel filter extension
-        self.write_reg(Block::I2c, R820T_DEV_ADDR, &[0x1e, 0x4e])?;
+        self.transport
+            .write_reg(Block::I2c, R820T_DEV_ADDR, &[0x1e, 0x4e])?;
         // Set DDC IF frequency
-        self.write_demod_reg(1, 0x19, &[0x3c])?;
-        self.write_demod_reg(1, 0x1a, &[0x99])?;
+        self.transport.write_demod_reg(1, 0x19, &[0x3c])?;
+        self.transport.write_demod_reg(1, 0x1a, &[0x99])?;
         // PLL mixer divider number
-        self.write_reg(Block::I2c, R820T_DEV_ADDR, &[0x10, 0x84])?;
+        self.transport
+            .write_reg(Block::I2c, R820T_DEV_ADDR, &[0x10, 0x84])?;
         // PLL integer word
-        self.write_reg(Block::I2c, R820T_DEV_ADDR, &[0x14, 0x0b])?;
+        self.transport
+            .write_reg(Block::I2c, R820T_DEV_ADDR, &[0x14, 0x0b])?;
         // PLL sigma-delta
-        self.write_reg(Block::I2c, R820T_DEV_ADDR, &[0x16, 0x76])?;
+        self.transport
+            .write_reg(Block::I2c, R820T_DEV_ADDR, &[0x16, 0x76])?;
         // VGA auto and ADC input path
-        self.write_reg(Block::I2c, R820T_DEV_ADDR, &[0x0c, 0xf0])?;
+        self.transport
+            .write_reg(Block::I2c, R820T_DEV_ADDR, &[0x0c, 0xf0])?;
 
         Ok(())
     }
+}
 
-    /*
+/*
     #[allow(clippy::cast_possible_truncation)]
     #[allow(clippy::cast_sign_loss)]
     fn convert_fir(fir: [i16; 16]) -> Vec<u8> {
@@ -192,136 +194,59 @@ impl Device {
     self.i2c_close()?;
     Ok(())
     }
-    */
-    #[expect(dead_code)]
-    fn read_reg(&self, block: Block, addr: u16, length: u16) -> Result<Vec<u8>, TransferError> {
+
+    fn i2c_open(&self) -> Result<(), Error> {
+        self.transport.write_demod_reg(1, 0x01, &[0x18])?;
+        Ok(())
+    }
+
+    fn i2c_close(&self) -> Result<(), Error> {
+        self.transport.write_demod_reg(1, 0x01, &[0x10])?;
+        Ok(())
+    }
+
+    fn i2c_read_reg(&self, reg_addr: u8, length: u16) -> Result<Vec<u8>, TransferError> {
         self.interface
             .control_in(
-                ControlIn {
-                    control_type: ControlType::Vendor,
-                    recipient: Recipient::Device,
-                    request: 0,
-                    value: addr,
-                    index: (block as u16) << 8,
-                    length,
-                },
+                encode_read_i2c(self.tuner.i2c_addr, reg_addr, length),
                 TIMEOUT_DURATION,
             )
             .wait()
     }
 
-    /// Writes `data` to consecutive registers starting at `addr`.
-    ///
-    /// The device expects little-endian byte order.
-    /// The last byte in `data` is always written to the lowest register.
-    /// That is, given `data: &[0xab, 0xcd]` and `addr: 0x0000`, the data will be written as:
-    /// - 0x0000 <- 0xcd
-    /// - 0x0001 <- 0xab
-    ///
-    fn write_reg(&self, block: Block, addr: u16, data: &[u8]) -> Result<(), TransferError> {
-        //let reversed: Vec<u8> = data.iter().rev().copied().collect();
-
+    fn i2c_write_reg(&self, reg_addr: u8, data: &[u8]) -> Result<(), TransferError> {
+        // TODO: Add max write limits
+        // TODO: Add shadow cache
         self.interface
             .control_out(
-                ControlOut {
-                    control_type: ControlType::Vendor,
-                    recipient: Recipient::Device,
-                    request: 0,
-                    value: addr,
-                    index: (block as u16) << 8 | 0x10,
-                    //data: &reversed,
-                    data,
-                },
+                encode_write_i2c(self.tuner.i2c_addr, reg_addr, data),
                 TIMEOUT_DURATION,
             )
             .wait()
     }
-
-    #[expect(dead_code)]
-    fn read_demod_reg(&self, page: u8, addr: u8, length: u16) -> Result<Vec<u8>, TransferError> {
-        self.interface
-            .control_in(
-                ControlIn {
-                    control_type: ControlType::Vendor,
-                    recipient: Recipient::Device,
-                    request: 0,
-                    value: u16::from(addr) << 8 | 0x20,
-                    index: u16::from(page),
-                    length,
-                },
-                TIMEOUT_DURATION,
-            )
-            .wait()
-    }
-
-    fn write_demod_reg(&self, page: u8, addr: u8, data: &[u8]) -> Result<(), TransferError> {
-        self.interface
-            .control_out(
-                ControlOut {
-                    control_type: ControlType::Vendor,
-                    recipient: Recipient::Device,
-                    request: 0,
-                    value: u16::from(addr) << 8 | 0x20,
-                    index: u16::from(page) | 0x10,
-                    data,
-                },
-                TIMEOUT_DURATION,
-            )
-            .wait()
-    }
-} /*
-fn i2c_open(&self) -> Result<(), Error> {
-self.write_demod_reg(1, 0x01, &[0x18])?;
-Ok(())
-}
-
-fn i2c_close(&self) -> Result<(), Error> {
-self.write_demod_reg(1, 0x01, &[0x10])?;
-Ok(())
-}
-
-fn i2c_read_reg(&self, reg_addr: u8, length: u16) -> Result<Vec<u8>, TransferError> {
-self.interface
-.control_in(
-encode_read_i2c(self.tuner.i2c_addr, reg_addr, length),
-TIMEOUT_DURATION,
-)
-.wait()
-}
-
-fn i2c_write_reg(&self, reg_addr: u8, data: &[u8]) -> Result<(), TransferError> {
-// TODO: Add max write limits
-// TODO: Add shadow cache
-self.interface
-.control_out(
-encode_write_i2c(self.tuner.i2c_addr, reg_addr, data),
-TIMEOUT_DURATION,
-)
-.wait()
-}
 }
 
 fn encode_read_i2c(dev_addr: u16, reg_addr: u8, length: u16) -> ControlIn {
-ControlIn {
-control_type: ControlType::Vendor,
-recipient: Recipient::Device,
-request: 0,
-value: u16::from(reg_addr) << 8 | dev_addr,
-index: (Block::I2c as u16) << 8,
-length,
-}
+    ControlIn {
+        control_type: ControlType::Vendor,
+        recipient: Recipient::Device,
+        request: 0,
+        value: u16::from(reg_addr) << 8 | dev_addr,
+        index: (Block::I2c as u16) << 8,
+        length,
+    }
 }
 
 fn encode_write_i2c(dev_addr: u16, reg_addr: u8, data: &[u8]) -> ControlOut {
-ControlOut {
-control_type: ControlType::Vendor,
-recipient: Recipient::Device,
-request: 0,
-value: dev_addr,
-index: (Block::I2c as u16) << 8 | 0x10,
-// TODO: Add register addressing in data
-data,
-}
+    ControlOut {
+        control_type: ControlType::Vendor,
+        recipient: Recipient::Device,
+        request: 0,
+        value: dev_addr,
+        index: (Block::I2c as u16) << 8 | 0x10,
+        // TODO: Add register addressing in data
+        data,
+    }
 }
 */
 
@@ -332,11 +257,7 @@ impl ConfiguredDevice {
     ///
     /// Will return `Err` if there are any USB errors during the process.
     pub fn sample(&self, _duration: Duration) -> Result<Vec<u8>, Error> {
-        let mut reader = self
-            .device
-            .interface
-            .endpoint::<nusb::transfer::Bulk, nusb::transfer::In>(0x81)?
-            .reader(4096);
+        let mut reader = self.transport.get_bulk_reader()?;
 
         let mut iq = Vec::new();
 
