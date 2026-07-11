@@ -33,6 +33,11 @@ pub struct Device {
     interface: nusb::Interface,
 }
 
+pub struct ConfiguredDevice {
+    device: Device,
+    // Consider adding config: Config here
+}
+
 pub struct Config {
     pub frequency: u32,
     pub sample_rate: u32,
@@ -60,33 +65,8 @@ impl Device {
     /// # Errors
     ///
     /// Will return `Err` if there are any USB errors during the process.
-    pub fn configure(&self, _config: Config) -> Result<(), Error> {
-        Ok(())
-    }
-
-    /// Reads samples from a configured device for the time duration specified.
-    ///
-    /// # Errors
-    ///
-    /// Will return `Err` if there are any USB errors during the process.
-    pub fn sample(&self, _duration: Duration) -> Result<Vec<u8>, Error> {
-        let mut reader = self
-            .interface
-            .endpoint::<nusb::transfer::Bulk, nusb::transfer::In>(0x81)?
-            .reader(4096);
-
-        let mut iq = Vec::new();
-
-        let samples = 2_048_000 * 10 * 2;
-        for _ in 0..(samples / 512) {
-            let mut buf = [0; 512];
-            reader.read_exact(&mut buf)?;
-
-            iq.extend_from_slice(&buf);
-        }
-
-        dbg!(iq.len());
-        Ok(iq)
+    pub fn configure(self, _config: Config) -> Result<ConfiguredDevice, Error> {
+        Ok(ConfiguredDevice { device: self })
     }
 
     fn find_device() -> Result<Self, Error> {
@@ -344,3 +324,31 @@ data,
 }
 }
 */
+
+impl ConfiguredDevice {
+    /// Reads samples from a configured device for the time duration specified.
+    ///
+    /// # Errors
+    ///
+    /// Will return `Err` if there are any USB errors during the process.
+    pub fn sample(&self, _duration: Duration) -> Result<Vec<u8>, Error> {
+        let mut reader = self
+            .device
+            .interface
+            .endpoint::<nusb::transfer::Bulk, nusb::transfer::In>(0x81)?
+            .reader(4096);
+
+        let mut iq = Vec::new();
+
+        let samples = 2_048_000 * 10 * 2;
+        for _ in 0..(samples / 512) {
+            let mut buf = [0; 512];
+            reader.read_exact(&mut buf)?;
+
+            iq.extend_from_slice(&buf);
+        }
+
+        dbg!(iq.len());
+        Ok(iq)
+    }
+}

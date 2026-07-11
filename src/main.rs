@@ -3,11 +3,14 @@ use std::fs;
 use std::time::Duration;
 
 fn main() -> Result<(), rtlsdrs::Error> {
-    let device = Device::open()?;
-    device.configure(Config {
+    let config = Config {
         frequency: 100_000_000,
         sample_rate: 2_048_000,
-    })?;
+    };
+
+    let device = Device::open()?;
+
+    let device = device.configure(config)?;
     let samples = device.sample(Duration::from_secs(10))?;
 
     fs::write("output.bin", samples)?;
