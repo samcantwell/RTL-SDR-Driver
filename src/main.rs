@@ -11,7 +11,7 @@ fn main() -> Result<(), rtlsdrs::Error> {
     let device = Device::open()?;
 
     let device = device.configure(config)?;
-    let samples = device.sample(Duration::from_secs(10))?;
+    let samples = device.sample(Duration::from_secs(1))?;
 
     fs::write("output.bin", samples)?;
     Ok(())

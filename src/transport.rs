@@ -17,12 +17,24 @@ pub struct Transport {
     interface: Interface,
 }
 
+//struct I2cRepeater<'a> {
+//    transport: &'a Transport,
+//}
+
 impl Transport {
-    pub fn new(interface: Interface) -> Self {
-        Transport { interface }
+    pub fn open(vendor_id: u16, product_id: u16) -> Result<Self, Error> {
+        let device_info = nusb::list_devices()
+            .wait()?
+            .find(|dev| dev.vendor_id() == vendor_id && dev.product_id() == product_id)
+            .ok_or(Error::DeviceNotFound)?;
+
+        let device = device_info.open().wait()?;
+        let interface = device.claim_interface(0).wait()?;
+
+        Ok(Self { interface })
     }
 
-    pub fn get_bulk_reader(&self) -> Result<EndpointRead<Bulk>, Error> {
+    pub fn bulk_reader(&self) -> Result<EndpointRead<Bulk>, Error> {
         Ok(self
             .interface
             .endpoint::<nusb::transfer::Bulk, nusb::transfer::In>(0x81)?
@@ -30,7 +42,7 @@ impl Transport {
     }
 
     #[expect(dead_code)]
-    fn read_reg(&self, block: Block, addr: u16, length: u16) -> Result<Vec<u8>, TransferError> {
+    pub fn read_reg(&self, block: Block, addr: u16, length: u16) -> Result<Vec<u8>, TransferError> {
         self.interface
             .control_in(
                 ControlIn {
@@ -46,17 +58,7 @@ impl Transport {
             .wait()
     }
 
-    /// Writes `data` to consecutive registers starting at `addr`.
-    ///
-    /// The device expects little-endian byte order.
-    /// The last byte in `data` is always written to the lowest register.
-    /// That is, given `data: &[0xab, 0xcd]` and `addr: 0x0000`, the data will be written as:
-    /// - 0x0000 <- 0xcd
-    /// - 0x0001 <- 0xab
-    ///
     pub fn write_reg(&self, block: Block, addr: u16, data: &[u8]) -> Result<(), TransferError> {
-        //let reversed: Vec<u8> = data.iter().rev().copied().collect();
-
         self.interface
             .control_out(
                 ControlOut {
@@ -110,4 +112,15 @@ impl Transport {
             )
             .wait()
     }
+
+    //    pub fn i2c_repeater(&self) -> Result<I2cRepeater<'_>, Error> {
+    //        self.write_demod_reg(1, 0x01, &[0x18])?;
+    //        Ok(I2cRepeater { transport: self })
+    //    }
 }
+
+//impl std::ops::Drop for I2cRepeater<'_> {
+//    fn drop(&mut self) {
+//        let _ = self.transport.write_demod_reg(1, 0x01, &[0x10]);
+//    }
+//}
